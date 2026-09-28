@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nudge - Digital Wellness</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <div class="logo-icon">N</div>
+        <div>
+          <h1 class="title">Nudge</h1>
+          <p class="subtitle">Behavioral Wellness Tracker</p>
+        </div>
+      </div>
+      <div class="status-badge" id="statusBadge">
+        <span class="pulse-dot"></span>
+        <span id="statusText">Active</span>
+      </div>
+    </header>
+
+    <div class="card session-card">
+      <div class="session-header">
+        <span class="label">CURRENT SESSION</span>
+        <span class="session-timer" id="sessionTimer">00:00:00</span>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <span class="metric-value" id="scrollCount">0</span>
+          <span class="metric-label">Scrolls</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-value" id="scrollDistance">0 px</span>
+          <span class="metric-label">Distance</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-value" id="avgVelocity">0</span>
+          <span class="metric-label">Avg px/ms</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-value" id="tabSwitches">0</span>
+          <span class="metric-label">Tab Switches</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-value" id="videoPlays">0</span>
+          <span class="metric-label">Videos Played</span>
+        </div>
+        <div class="metric-box">
+          <span class="metric-value" id="autoplayCount">0</span>
+          <span class="metric-label">Autoplays</span>
+        </div>
+      </div>
+
+      <div class="domains-row" id="domainsRow" style="display: none;">
+        <span class="domains-label">Contexts:</span>
+        <div class="domain-tags" id="domainTags"></div>
+      </div>
+    </div>
+
+    <div class="privacy-banner">
+      <span class="shield-icon">🛡️</span>
+      <div class="privacy-text">
+        <strong>100% Private & Local</strong>
+        <p>No keystrokes, form inputs, URLs or cloud transmissions.</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="openDashboardBtn">
+        Open Analytics Dashboard
+      </button>
+      <button class="btn btn-secondary" id="rotateSessionBtn" title="Finalize current session and start a new one">
+        Start New Session
+      </button>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
