@@ -13,7 +13,7 @@
         <div class="logo-icon">N</div>
         <div>
           <h1 class="title">Nudge</h1>
-          <p class="subtitle">Behavioral Wellness Tracker</p>
+          <p class="subtitle">AI Doomscroll Detector</p>
         </div>
       </div>
       <div class="status-badge" id="statusBadge">
@@ -21,6 +21,18 @@
         <span id="statusText">Active</span>
       </div>
     </header>
+
+    <!-- Doomscroll Risk Meter -->
+    <div class="card risk-card">
+      <div class="risk-header">
+        <span class="label">BEHAVIORAL RISK SCORE</span>
+        <span class="risk-badge" id="riskBadge">LOW (12%)</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="riskBar" style="width: 12%;"></div>
+      </div>
+      <p class="risk-desc" id="riskDesc">Browsing patterns appear healthy and intentional.</p>
+    </div>
 
     <div class="card session-card">
       <div class="session-header">
@@ -64,8 +76,8 @@
     <div class="privacy-banner">
       <span class="shield-icon">🛡️</span>
       <div class="privacy-text">
-        <strong>100% Private & Local</strong>
-        <p>No keystrokes, form inputs, URLs or cloud transmissions.</p>
+        <strong>100% Local Inference</strong>
+        <p>Hybrid ML & rule-based engine running strictly on-device.</p>
       </div>
     </div>
 
@@ -73,9 +85,14 @@
       <button class="btn btn-primary" id="openDashboardBtn">
         Open Analytics Dashboard
       </button>
-      <button class="btn btn-secondary" id="rotateSessionBtn" title="Finalize current session and start a new one">
-        Start New Session
-      </button>
+      <div class="btn-group">
+        <button class="btn btn-secondary" id="testNudgeBtn" title="Trigger a preview wellness nudge on the active tab">
+          Test Nudge
+        </button>
+        <button class="btn btn-secondary" id="rotateSessionBtn" title="Finalize current session and start a new one">
+          New Session
+        </button>
+      </div>
     </div>
   </div>
 

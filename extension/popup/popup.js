@@ -1,8 +1,7 @@
 /**
  * Nudge Extension Popup Controller
  *
- * Fetches real-time session telemetry from the background service worker
- * and provides navigation to the dashboard and session control.
+ * Fetches real-time session telemetry and hybrid ML doomscrolling score.
  */
 
 function formatDuration(ms) {
@@ -38,6 +37,10 @@ function updateUI(session) {
   const domainTagsEl = document.getElementById('domainTags');
   const domainsRowEl = document.getElementById('domainsRow');
 
+  const riskBadgeEl = document.getElementById('riskBadge');
+  const riskBarEl = document.getElementById('riskBar');
+  const riskDescEl = document.getElementById('riskDesc');
+
   if (timerEl) timerEl.textContent = formatDuration(session.durationMs);
   if (scrollCountEl) scrollCountEl.textContent = session.scrollCount.toLocaleString();
   if (scrollDistanceEl) scrollDistanceEl.textContent = `${session.totalScrollDistance.toLocaleString()} px`;
@@ -46,6 +49,30 @@ function updateUI(session) {
   if (videoPlaysEl) videoPlaysEl.textContent = session.videoPlayCount;
   if (autoplayCountEl) autoplayCountEl.textContent = session.autoplayCount;
 
+  // Evaluation & Risk meter
+  if (session.evaluation) {
+    const evalData = session.evaluation;
+    const scorePct = Math.round(evalData.score * 100);
+
+    if (riskBarEl) riskBarEl.style.width = `${Math.max(5, scorePct)}%`;
+
+    if (riskBadgeEl) {
+      riskBadgeEl.textContent = `${evalData.riskLevel} (${scorePct}%)`;
+      riskBadgeEl.className = 'risk-badge ' + evalData.riskLevel.toLowerCase();
+    }
+
+    if (riskDescEl) {
+      if (evalData.recommendation) {
+        riskDescEl.textContent = evalData.recommendation;
+      } else if (evalData.reasons && evalData.reasons.length > 0) {
+        riskDescEl.textContent = evalData.reasons[0];
+      } else {
+        riskDescEl.textContent = 'Browsing patterns appear healthy and intentional.';
+      }
+    }
+  }
+
+  // Domains
   if (domainTagsEl && domainsRowEl) {
     if (Array.isArray(session.domains) && session.domains.length > 0) {
       domainsRowEl.style.display = 'flex';
@@ -80,9 +107,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const openDashboardBtn = document.getElementById('openDashboardBtn');
   if (openDashboardBtn) {
     openDashboardBtn.addEventListener('click', () => {
-      // Look for the dashboard index page inside extension or fallback
       const dashboardUrl = chrome.runtime.getURL('dashboard/index.html');
       chrome.tabs.create({ url: dashboardUrl });
+    });
+  }
+
+  const testNudgeBtn = document.getElementById('testNudgeBtn');
+  if (testNudgeBtn) {
+    testNudgeBtn.addEventListener('click', async () => {
+      try {
+        await chrome.runtime.sendMessage({ type: 'TRIGGER_TEST_NUDGE' });
+        window.close(); // Close popup so user sees toast on page
+      } catch (err) {
+        console.error('[Nudge Popup] Failed to trigger test nudge:', err);
+      }
     });
   }
 
@@ -90,7 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (rotateBtn) {
     rotateBtn.addEventListener('click', async () => {
       rotateBtn.disabled = true;
-      rotateBtn.textContent = 'Rotating...';
       try {
         await chrome.runtime.sendMessage({
           type: 'USER_ACTIVITY',
@@ -101,7 +138,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('[Nudge Popup] Failed to rotate session:', err);
       } finally {
         rotateBtn.disabled = false;
-        rotateBtn.textContent = 'Start New Session';
       }
     });
   }

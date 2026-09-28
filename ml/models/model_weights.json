@@ -1,0 +1,84 @@
+{
+  "modelType": "LogisticRegressionCalibrated",
+  "featureNames": [
+    "sessionDurationMinutes",
+    "scrollFrequency",
+    "averageScrollVelocity",
+    "maxScrollVelocity",
+    "scrollDistanceRate",
+    "activityDensity",
+    "tabSwitchFrequency",
+    "autoplayRatio",
+    "videoConsumptionRate",
+    "isLateNight",
+    "infiniteScrollDomainRatio",
+    "compulsionRepetitionIndex"
+  ],
+  "scaler": {
+    "mean": [
+      38.12086,
+      13.75059,
+      1.35716,
+      3.0722,
+      13470.69726,
+      33.0946,
+      3.62188,
+      0.30929,
+      0.70764,
+      0.2285,
+      0.37002,
+      0.44028
+    ],
+    "scale": [
+      20.32668,
+      12.01212,
+      0.91276,
+      2.56914,
+      17620.45565,
+      20.80892,
+      3.22277,
+      0.35412,
+      0.90886,
+      0.41987,
+      0.33138,
+      0.29909
+    ]
+  },
+  "coefficients": [
+    0.54849,
+    0.77726,
+    0.73859,
+    0.74399,
+    0.74919,
+    0.93509,
+    0.85167,
+    1.0111,
+    0.84648,
+    0.27336,
+    0.89693,
+    0.93957
+  ],
+  "intercept": -2.254,
+  "threshold": 0.5,
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "rocAuc": 1.0
+  },
+  "featureImportances": {
+    "scrollFrequency": 0.2,
+    "scrollDistanceRate": 0.1702,
+    "autoplayRatio": 0.1501,
+    "infiniteScrollDomainRatio": 0.14,
+    "videoConsumptionRate": 0.1306,
+    "compulsionRepetitionIndex": 0.0905,
+    "activityDensity": 0.0794,
+    "averageScrollVelocity": 0.0294,
+    "maxScrollVelocity": 0.0097,
+    "sessionDurationMinutes": 0.0,
+    "tabSwitchFrequency": 0.0,
+    "isLateNight": 0.0
+  }
+}

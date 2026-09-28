@@ -1,17 +1,14 @@
 # Nudge: AI-Powered Doomscrolling Detection & Digital Wellness
 
-> A privacy-first Chrome browser extension that detects compulsive browsing and doomscrolling through behavioral telemetry (scrolling kinematics, video autoplay, tab transitions) rather than simplistic screen time counters.
+> A privacy-first, on-device Chrome browser extension that detects compulsive browsing and doomscrolling through behavioral telemetry (scrolling kinematics, video autoplay, circadian context, tab transitions) and runs dual-engine (ML + Rule-Based) local inference with gentle, non-intrusive interventions.
 
 ---
 
-## 1. Project Overview & Philosophy
+## 1. Project Overview & Multi-Phase Architecture
 
-Most digital wellness tools simply measure raw minutes: *"You have been on Instagram for 30 minutes."*
+Most digital wellness tools rely solely on coarse screen-time counters: *"You have been on Instagram for 30 minutes."*
 
-**Nudge** takes a fundamentally different, behavioral-first approach:
-- Measures **how** you interact with content (scrolling velocity, scroll distance, repetition, idle times, tab churn).
-- Distinguishes passive autoplay consumption from intentional navigation.
-- Evaluates compulsive behavioral markers locally on your device without sending any data to external servers or cloud APIs.
+**Nudge** is engineered around behavioral kinematics, evaluating compulsive consumption patterns locally on your machine without external cloud APIs.
 
 ```
        ┌────────────────────────────────────────────────────────┐
@@ -33,21 +30,45 @@ Most digital wellness tools simply measure raw minutes: *"You have been on Insta
            ┌──────────────────────┴──────────────────────┐
            │                                             │
            ▼                                             ▼
-  Active Session State                         Historical Store
-(chrome.storage.local)                       (IndexedDB: nudgeDB)
-(rotated on 60s idle)                        (completed sessions)
+  Feature Extraction                            Personal Profile
+(12-dim behavioral vector)                  (Quantile baseline adapt)
            │                                             │
-           └──────────────────────┬──────────────────────┘
+           ├──────────────────────┬──────────────────────┤
+           │                      │                      │
+           ▼                      ▼                      ▼
+  Rule-Based Engine       In-Browser ML         Intervention Dispatcher
+(Explainable heuristics) (Logistic / ONNX)      (Gentle breathing toast)
+           │                      │                      │
+           └──────────────────────┼──────────────────────┘
                                   ▼
                          React Vite Dashboard
-               (Live telemetry, trends, dataset export)
+             (Dual-Engine AI gauge, trends, settings, export)
 ```
 
 ---
 
-## 2. Privacy Guarantees
+## 2. Complete Phase Implementation Status
 
-Privacy is a non-negotiable core design requirement.
+| Phase | Milestone | Implementation Details |
+|---|---|---|
+| **Phase 1** | Chrome Extension Foundation | Manifest V3, minimal permissions (`storage`, `tabs`, `alarms`), popup UI, icons. |
+| **Phase 2** | Behavioral Event Collection | `content.js` monitors scrolling kinematics (`scrollTop`), user activity ticks, HTML5 video/autoplay via MutationObserver. |
+| **Phase 3** | Session Management | Inactivity threshold (60s), automatic session rotation, active session state. |
+| **Phase 4** | Local Persistent Storage | Historical completed sessions stored in IndexedDB (`nudgeDB`); active session in `chrome.storage.local`. |
+| **Phase 5** | Feature Engineering | Transforms raw telemetry into a standardized 12-dimensional behavioral feature vector (`features.js`). |
+| **Phase 6** | Rule-Based Detection | Multi-signal heuristic evaluator calculating `doomscrollScore` (0.0 to 1.0) with plain-English reasons (`detector.js`). |
+| **Phase 7** | Gentle Intervention System | Isolated Shadow DOM toast injected into current tab with a guided 60s breathing circle and snooze controls (`content.js`). |
+| **Phase 8** | React Analytics Dashboard | Vite + React + Tailwind + Chart.js dashboard displaying live AI metrics, historical trends, settings, and JSON export. |
+| **Phase 9** | Synthetic Dataset Generator | Realistic cohort generator producing 2,500 labeled sessions (`ml/generate_dataset.py`). |
+| **Phase 10** | Machine Learning Pipeline | Python pipeline training Random Forest and Logistic Regression with evaluation and ONNX export (`ml/train.py`). |
+| **Phase 11** | In-Browser ML / ONNX Inference | Zero-dependency on-device probability evaluation and dual-engine hybrid score blending (`modelRunner.js`). |
+| **Phase 12** | Adaptive Personalization | Rolling quantile analysis of user's personal speed and duration to eliminate false positives (`personalization.js`). |
+
+---
+
+## 3. Privacy Guarantees
+
+Privacy is a non-negotiable core architectural constraint.
 
 | Telemetry Type | What Nudge Collects | What Nudge Strictly Prohibits |
 |---|---|---|
@@ -59,56 +80,45 @@ Privacy is a non-negotiable core design requirement.
 
 ---
 
-## 3. Behavioral Signals & Metrics
-
-Each completed browsing session in `IndexedDB` contains:
-
-- `sessionId`: Unique session UUID
-- `startTime` / `endTime`: Exact session bounds
-- `durationMs`: Net active duration in milliseconds
-- `scrollCount`: Total scroll bursts detected
-- `totalScrollDistance`: Cumulative vertical pixels traversed
-- `totalScrollVelocity`: Accumulated velocity index
-- `averageScrollVelocity`: `totalScrollVelocity / scrollCount`
-- `maxScrollVelocity`: Peak velocity burst (`px/ms`)
-- `activityCount`: Total user interactions (clicks, scrolls, key ticks, mouse movement)
-- `tabSwitchCount`: Context switching count across tabs
-- `videoPlayCount`: Total HTML5 video playback occurrences
-- `autoplayCount`: Videos detected with `autoplay` attribute or non-user invocation
-- `domains`: List of unique normalized hostnames visited (e.g. `['reddit.com', 'x.com']`)
-
----
-
-## 4. Project Structure
+## 4. Project Directory Structure
 
 ```text
 new_nudge/
 ├── extension/                       # Chrome Extension (Manifest V3)
-│   ├── manifest.json                # Extension manifest configuration
-│   ├── background.js                # Background service worker (MV3)
-│   ├── content.js                   # Privacy-preserving DOM observer
+│   ├── manifest.json                # MV3 definition
+│   ├── background.js                # Background service worker (all phases)
+│   ├── content.js                   # Privacy DOM observer + Shadow DOM toast
 │   ├── db.js                        # IndexedDB wrapper (nudgeDB)
-│   ├── icons/                       # Extension icon assets (16, 48, 128)
+│   ├── icons/                       # Icon assets (16, 48, 128)
+│   ├── models/                      # Synced ONNX model & browser weights
+│   │   ├── doomscroll_model.onnx
+│   │   └── model_weights.json
 │   ├── popup/                       # Extension action popup
 │   │   ├── popup.html
 │   │   ├── popup.css
 │   │   └── popup.js
 │   ├── utils/
-│   │   ├── session.js               # Pure session lifecycle & metric math
-│   │   └── url.js                   # Privacy-preserving hostname sanitizer
+│   │   ├── session.js               # Session lifecycle & metric math
+│   │   ├── url.js                   # Privacy-preserving domain sanitizer
+│   │   ├── features.js              # 12-dimensional feature engineering
+│   │   ├── detector.js              # Rule-based heuristic scoring
+│   │   ├── modelRunner.js           # In-browser ML / hybrid inference engine
+│   │   └── personalization.js       # Adaptive quantile baseline calibration
 │   └── dashboard/                   # Bundled production dashboard
 │
 ├── dashboard/                       # React + Vite + Tailwind + Chart.js
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── ActiveSessionCard.jsx
-│   │   │   ├── AnalyticsCharts.jsx
+│   │   │   ├── AIInferenceCard.jsx      # Dual-Engine AI gauge & drivers
+│   │   │   ├── AnalyticsCharts.jsx      # Chart.js behavioral trends
 │   │   │   ├── Header.jsx
 │   │   │   ├── HistoricalSessionsTable.jsx
+│   │   │   ├── InterventionsCard.jsx    # Nudge settings & intervention logs
 │   │   │   ├── PrivacyCard.jsx
 │   │   │   └── StatsOverview.jsx
 │   │   ├── services/
-│   │   │   └── extensionApi.js      # Bridge for extension messaging & preview
+│   │   │   └── extensionApi.js          # Extension messaging bridge
 │   │   ├── App.jsx
 │   │   ├── index.css
 │   │   └── main.jsx
@@ -118,11 +128,25 @@ new_nudge/
 │   ├── postcss.config.js
 │   └── vite.config.js
 │
-├── tests/                           # Vitest Automated Test Suite
-│   ├── db.test.js                   # IndexedDB CRUD tests (fake-indexeddb)
-│   ├── messaging.test.js            # Message validation & sanitization
+├── ml/                              # Python Machine Learning Pipeline
+│   ├── generate_dataset.py          # Synthetic dataset generator (2,500 samples)
+│   ├── train.py                     # Model training & ONNX export pipeline
+│   ├── data/
+│   │   ├── nudge_dataset.csv
+│   │   └── nudge_dataset.json
+│   └── models/
+│       ├── doomscroll_model.onnx    # Exported ONNX model
+│       └── model_weights.json       # Scaler parameters & logistic coefficients
+│
+├── tests/                           # Vitest Automated Test Suite (36 tests)
 │   ├── session.test.js              # Session kinetics & idle rotation
-│   └── url.test.js                  # Hostname extraction & privacy filter
+│   ├── url.test.js                  # Domain extraction & privacy filter
+│   ├── db.test.js                   # IndexedDB CRUD tests
+│   ├── messaging.test.js            # Message validation & sanitization
+│   ├── features.test.js             # Feature engineering validation
+│   ├── detector.test.js             # Rule-based detector tests
+│   ├── modelRunner.test.js          # In-browser ML probability & hybrid tests
+│   └── personalization.test.js      # Adaptive quantile baseline tests
 │
 ├── scripts/
 │   ├── copy-dashboard.js            # Syncs Vite build into extension/
@@ -138,25 +162,32 @@ new_nudge/
 ## 5. Getting Started & Installation
 
 ### Prerequisites
-- Node.js (v18 or higher recommended; developed on Node v24)
-- Google Chrome (or Chromium-based browser)
+- Node.js (v18+)
+- Python (3.10+; for ML dataset generation and model training)
+- Google Chrome or any Chromium browser
 
-### 1. Install Dependencies
+### 1. Install Node Dependencies
 ```bash
 npm install
 ```
 
-### 2. Run Test Suite
+### 2. Run Automated Test Suite (36 Tests)
 ```bash
 npm test
 ```
-All unit tests will execute across session math, URL sanitization, IndexedDB operations, and message validation.
+All unit tests will execute across session kinetics, URL filtering, IndexedDB, feature extraction, rule scoring, ML inference, and adaptive personalization.
 
-### 3. Build the Dashboard
+### 3. Generate ML Dataset & Train Models (Optional / Pre-run)
+```bash
+python ml/generate_dataset.py
+python ml/train.py
+```
+This generates `ml/data/nudge_dataset.csv`, trains the Random Forest and Logistic Regression models, and automatically syncs `doomscroll_model.onnx` and `model_weights.json` into `extension/models/`.
+
+### 4. Build Dashboard & Sync into Extension
 ```bash
 npm run dashboard:build
 ```
-This compiles the React + Vite dashboard and syncs the distribution files directly into `extension/dashboard/` so the Chrome extension can load it natively.
 
 ---
 
@@ -166,68 +197,21 @@ This compiles the React + Vite dashboard and syncs the distribution files direct
 2. In the address bar, navigate to `chrome://extensions/`.
 3. Enable **Developer mode** using the toggle in the upper-right corner.
 4. Click **Load unpacked**.
-5. Select the `extension/` folder inside this project directory:
+5. Select the `extension/` folder:
    ```
    D:\File Transfer\Academia\Projects\new_nudge\extension
    ```
-6. The **Nudge: Digital Wellness & Behavioral Tracker** extension is now active.
+6. The extension is now active.
 
 ---
 
-## 7. How to Run the Dashboard
+## 7. How to Test the Complete System
 
-You can use the dashboard in two ways:
-
-### Mode A: Directly inside the Chrome Extension (Recommended)
-1. Click the **Nudge** icon in your Chrome extensions toolbar.
-2. In the popup window, click **Open Analytics Dashboard**.
-3. It will open `chrome-extension://<id>/dashboard/index.html` with direct access to live background sessions and IndexedDB storage.
-
-### Mode B: Standalone Vite Dev Server
-```bash
-npm run dashboard:dev
-```
-- Open `http://localhost:5173` in any browser.
-- The dashboard will run in Standalone Preview mode with sample data and local storage caching for UI inspection and development.
-
----
-
-## 8. Manual Verification Steps
-
-1. **Active Telemetry**:
-   - Open any website (e.g. `https://news.ycombinator.com` or `https://youtube.com`).
-   - Scroll up and down, move your mouse, and switch tabs.
-   - Click the Nudge extension icon in the toolbar.
-   - Verify the popup displays incrementing scroll counts, distance, average velocity, and active domains.
-
-2. **Idle Session Rotation**:
-   - Leave the browser untouched for at least 60 seconds.
-   - Resume activity (scroll or move mouse).
-   - Verify that the previous session was finalized and committed to IndexedDB, and a fresh active session began.
-
-3. **Service Worker Persistence**:
-   - Navigate to `chrome://extensions/` and click the reload icon on Nudge.
-   - Click the Nudge popup icon.
-   - Verify that the active session was restored seamlessly from `chrome.storage.local`.
-
-4. **Historical Database & Dashboard**:
-   - Open the Dashboard.
-   - Verify completed sessions appear in the **Historical Sessions (IndexedDB)** table.
-   - Test deleting an individual session and exporting the dataset via **Export Dataset**.
-
----
-
-## 9. Future Development Roadmap
-
-- [x] **Phase 1**: Chrome Extension Foundation (MV3, permissions, icons, popup)
-- [x] **Phase 2**: Behavioral Event Collection (kinematics, activity, video/autoplay)
-- [x] **Phase 3**: Session Management (idle detection, threshold rotation, metrics)
-- [x] **Phase 4**: Local Persistent Storage (IndexedDB `nudgeDB` + `chrome.storage.local`)
-- [ ] **Phase 5**: Feature Engineering (session periodicity, velocity acceleration, compulsion ratio)
-- [ ] **Phase 6**: Rule-Based Doomscroll Detector (`doomscrollScore: 0.0 - 1.0`)
-- [ ] **Phase 7**: Nudge / Gentle Intervention UI (non-intrusive break suggestions)
-- [x] **Phase 8**: React Analytics Dashboard (Vite, Tailwind, Chart.js, dataset export)
-- [ ] **Phase 9**: Dataset Generation & Labeling Pipeline
-- [ ] **Phase 10**: Python ML Model Training (Random Forest / XGBoost on exported JSON datasets)
-- [ ] **Phase 11**: ONNX Runtime Web In-Browser Local Inference
-- [ ] **Phase 12**: Personalization & Adaptive Baseline Calibration
+1. **Popup & Risk Meter**:
+   - Click the Nudge icon in the Chrome toolbar.
+   - Observe the live **Behavioral Risk Score** and active session timer.
+   - Click **Test Nudge**: A gentle, floating wellness check-in toast will appear on your active webpage with a guided 60-second breathing circle.
+2. **Dashboard**:
+   - Click **Open Analytics Dashboard** in the popup (or run `npm run dashboard:dev` for standalone browser preview at `http://localhost:5173`).
+   - Inspect the **Dual-Engine AI Inference** panel showing ML probability, rule scores, and feature drivers.
+   - Adjust nudge sensitivity, cooldown intervals, or export historical sessions as a JSON dataset.

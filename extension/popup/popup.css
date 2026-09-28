@@ -6,7 +6,7 @@
 }
 
 body {
-  width: 350px;
+  width: 360px;
   background-color: #0f172a;
   color: #f8fafc;
   padding: 16px;
@@ -15,7 +15,7 @@ body {
 .popup-container {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .header {
@@ -38,7 +38,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 18px;
   color: #ffffff;
   box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
@@ -88,16 +88,73 @@ body {
   background: #1e293b;
   border: 1px solid #334155;
   border-radius: 12px;
-  padding: 14px;
+  padding: 12px 14px;
+}
+
+/* Risk meter styling */
+.risk-card {
+  border-color: rgba(99, 102, 241, 0.25);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.9) 100%);
+}
+
+.risk-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.risk-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+.risk-badge.moderate {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
+.risk-badge.elevated, .risk-badge.severe {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: rgba(244, 63, 94, 0.3);
+  color: #fb7185;
+}
+
+.progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: #0f172a;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981 0%, #6366f1 50%, #f43f5e 100%);
+  transition: width 0.4s ease;
+  border-radius: 999px;
+}
+
+.risk-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.35;
 }
 
 .session-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   border-bottom: 1px solid #334155;
-  padding-bottom: 8px;
+  padding-bottom: 6px;
 }
 
 .label {
@@ -109,7 +166,7 @@ body {
 
 .session-timer {
   font-family: 'Courier New', Courier, monospace;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: #38bdf8;
 }
@@ -117,14 +174,14 @@ body {
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  gap: 6px;
 }
 
 .metric-box {
   background: #0f172a;
   border: 1px solid #334155;
   border-radius: 8px;
-  padding: 8px 6px;
+  padding: 7px 5px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -132,18 +189,18 @@ body {
 }
 
 .metric-value {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: #f1f5f9;
 }
 
 .metric-label {
-  font-size: 9.5px;
+  font-size: 9px;
   color: #94a3b8;
 }
 
 .domains-row {
-  margin-top: 10px;
+  margin-top: 8px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -165,7 +222,7 @@ body {
 .domain-tag {
   background: #334155;
   color: #cbd5e1;
-  font-size: 10px;
+  font-size: 9.5px;
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -174,24 +231,24 @@ body {
   background: rgba(99, 102, 241, 0.08);
   border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .shield-icon {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .privacy-text strong {
-  font-size: 11px;
+  font-size: 10.5px;
   color: #a5b4fc;
   display: block;
 }
 
 .privacy-text p {
-  font-size: 10px;
+  font-size: 9.5px;
   color: #94a3b8;
 }
 
@@ -201,11 +258,16 @@ body {
   gap: 6px;
 }
 
+.btn-group {
+  display: flex;
+  gap: 6px;
+}
+
 .btn {
   border: none;
   border-radius: 8px;
-  padding: 9px 12px;
-  font-size: 12px;
+  padding: 8px 12px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -223,6 +285,7 @@ body {
 }
 
 .btn-secondary {
+  flex: 1;
   background: #334155;
   color: #cbd5e1;
 }
