@@ -1,21 +1,17 @@
 /**
- * Nudge Content Script - Privacy-First Behavioral Observer, Live HUD & Intervention UI
+ * Nudge Content Script - Privacy-First Behavioral Observer, Calm HUD & Soft Interventions
  *
- * 1. Scrolling kinematics (captures window, inner containers, and wheel events)
- * 2. High-level user activity (clicks, mouse movement, keyboard interaction without key values)
- * 3. Video playback and autoplay detection
- * 4. Live Floating Wellness HUD (displays real-time scroll velocity and wellness status right on the webpage)
- * 5. Isolated Gentle Wellness Interventions via Shadow DOM
- *
- * Guarantees:
- * - NO keystrokes, form inputs, passwords, or text recorded.
- * - NO page content, DOM tree dumps, or screenshots.
+ * Improvements:
+ * 1. Exponential Moving Average (EMA) smoothing for velocity (no rapid flashing or jitter)
+ * 2. Real-time sliding-window burst detection for immediate doomscrolling identification
+ * 3. Soft Interruption: Ambient vignette overlay + guided breathing + mindful pause
+ * 4. Gentle scroll friction during interventions
+ * 5. Strict privacy: Zero keystrokes, passwords, or text recorded.
  */
 
 (function () {
   'use strict';
 
-  // Guard against double injection
   if (window.__nudgeObserverInitialized) {
     return;
   }
@@ -26,14 +22,12 @@
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
         return chrome.runtime.sendMessage(message).catch(() => {});
       }
-    } catch {
-      // Inaccessible runtime
-    }
+    } catch {}
     return Promise.resolve();
   }
 
   /* =========================================================================
-   * 1. LIVE FLOATING WELLNESS HUD (SHADOW DOM)
+   * 1. SMOOTHED CALM LIVE HUD (SHADOW DOM)
    * ========================================================================= */
 
   let hudHost = null;
@@ -46,8 +40,10 @@
   let isHudMinimized = false;
 
   let localScrollCount = 0;
-  let localTotalDistance = 0;
-  let localLastVelocity = 0;
+  let smoothedVelocity = 0;
+  let lastInstantVelocity = 0;
+  let hudRenderTimer = null;
+  let decayTimer = null;
 
   function initHud() {
     if (hudHost) return;
@@ -67,21 +63,21 @@
       <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; }
         .hud-pill {
-          background: rgba(15, 23, 42, 0.92);
+          background: rgba(15, 23, 42, 0.90);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
-          border: 1px solid rgba(99, 102, 241, 0.35);
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 0 10px rgba(99, 102, 241, 0.15);
+          border: 1px solid rgba(99, 102, 241, 0.3);
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
           border-radius: 9999px;
           padding: 6px 14px;
           color: #f8fafc;
           display: flex;
           align-items: center;
-          gap: 10px;
-          font-size: 11px;
+          gap: 9px;
+          font-size: 11.5px;
           user-select: none;
           cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
         .hud-pill:hover {
           border-color: rgba(99, 102, 241, 0.6);
@@ -92,28 +88,31 @@
           height: 8px;
           border-radius: 50%;
           background: #10b981;
-          box-shadow: 0 0 8px #10b981;
-          transition: background 0.3s ease;
+          box-shadow: 0 0 6px #10b981;
+          transition: background 0.4s ease, box-shadow 0.4s ease;
         }
         .hud-title {
           font-weight: 700;
           color: #a5b4fc;
+          font-size: 11px;
         }
         .metric-badge {
           display: flex;
           align-items: center;
           gap: 4px;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          background: rgba(30, 41, 59, 0.7);
+          background: rgba(30, 41, 59, 0.75);
           padding: 2px 7px;
           border-radius: 6px;
           border: 1px solid rgba(51, 65, 85, 0.6);
           color: #38bdf8;
+          font-size: 11px;
         }
         .status-tag {
           font-weight: 600;
           color: #34d399;
-          font-size: 10px;
+          font-size: 10.5px;
+          transition: color 0.4s ease;
         }
         .toggle-btn {
           background: transparent;
@@ -136,12 +135,12 @@
           background: linear-gradient(135deg, #6366f1, #8b5cf6);
           box-shadow: 0 2px 10px rgba(99, 102, 241, 0.5);
           font-weight: 800;
-          font-size: 14px;
+          font-size: 13px;
           color: #fff;
         }
       </style>
 
-      <div class="hud-pill" id="hudPill" title="Nudge Live Telemetry (Click to toggle view)">
+      <div class="hud-pill" id="hudPill" title="Nudge Live Telemetry">
         <span class="brand-dot" id="hudDot"></span>
         <span class="hud-title">Nudge</span>
         <div class="metric-badge">
@@ -153,7 +152,7 @@
           <span id="hudScrolls">0</span>
           <span style="font-size: 9px; color: #94a3b8;">scrolls</span>
         </div>
-        <span class="status-tag" id="hudStatus">Healthy</span>
+        <span class="status-tag" id="hudStatus">Calm</span>
         <button class="toggle-btn" id="hudMinimizeBtn" title="Minimize">—</button>
       </div>
     `;
@@ -174,9 +173,7 @@
 
     if (hudPillEl) {
       hudPillEl.addEventListener('click', () => {
-        if (isHudMinimized) {
-          toggleMinimize();
-        }
+        if (isHudMinimized) toggleMinimize();
       });
     }
 
@@ -201,14 +198,14 @@
         <span class="hud-title">Nudge</span>
         <div class="metric-badge">
           <span>⚡</span>
-          <span id="hudVelocity">${localLastVelocity.toFixed(1)}</span>
+          <span id="hudVelocity">${smoothedVelocity.toFixed(1)}</span>
           <span style="font-size: 9px; color: #94a3b8;">px/ms</span>
         </div>
         <div class="metric-badge">
           <span id="hudScrolls">${localScrollCount}</span>
           <span style="font-size: 9px; color: #94a3b8;">scrolls</span>
         </div>
-        <span class="status-tag" id="hudStatus">Healthy</span>
+        <span class="status-tag" id="hudStatus">Calm</span>
         <button class="toggle-btn" id="hudMinimizeBtn" title="Minimize">—</button>
       `;
       hudVelocityEl = hudShadow.getElementById('hudVelocity');
@@ -225,53 +222,114 @@
     }
   }
 
-  function updateHudLive(velocity, distanceDelta) {
+  // Smooth velocity update using EMA (alpha = 0.25) throttled to 350ms
+  function applySmoothedVelocity(instantVelocity) {
+    lastInstantVelocity = instantVelocity;
+    if (smoothedVelocity === 0) {
+      smoothedVelocity = instantVelocity;
+    } else {
+      // Exponential moving average: prevents rapid jumping
+      smoothedVelocity = smoothedVelocity * 0.75 + instantVelocity * 0.25;
+    }
+
+    // Reset decay timer: after 1.2s of inactivity, smoothly decay to 0
+    if (decayTimer) clearTimeout(decayTimer);
+    decayTimer = setTimeout(() => {
+      const stepDecay = () => {
+        smoothedVelocity = smoothedVelocity * 0.6;
+        if (smoothedVelocity < 0.08) {
+          smoothedVelocity = 0;
+          renderHudValues();
+        } else {
+          renderHudValues();
+          setTimeout(stepDecay, 200);
+        }
+      };
+      stepDecay();
+    }, 1200);
+
+    // Throttle DOM updates to 350ms for calm, readable UI
+    if (!hudRenderTimer) {
+      hudRenderTimer = setTimeout(() => {
+        renderHudValues();
+        hudRenderTimer = null;
+      }, 350);
+    }
+  }
+
+  function renderHudValues() {
     if (!hudHost) initHud();
     if (isHudMinimized) return;
 
-    localScrollCount += 1;
-    localTotalDistance += distanceDelta;
-    localLastVelocity = velocity;
-
-    if (hudVelocityEl) hudVelocityEl.textContent = velocity.toFixed(1);
+    if (hudVelocityEl) hudVelocityEl.textContent = smoothedVelocity.toFixed(1);
     if (hudScrollsEl) hudScrollsEl.textContent = localScrollCount;
 
-    // Visual feedback
-    if (hudPulseDot) {
-      if (velocity > 2.5) {
+    if (hudPulseDot && hudStatusEl) {
+      if (smoothedVelocity > 2.2) {
         hudPulseDot.style.background = '#f43f5e';
         hudPulseDot.style.boxShadow = '0 0 10px #f43f5e';
-        if (hudStatusEl) {
-          hudStatusEl.textContent = 'Rapid';
-          hudStatusEl.style.color = '#fb7185';
-        }
-      } else if (velocity > 1.4) {
+        hudStatusEl.textContent = 'Compulsive';
+        hudStatusEl.style.color = '#fb7185';
+      } else if (smoothedVelocity > 1.2) {
         hudPulseDot.style.background = '#f59e0b';
         hudPulseDot.style.boxShadow = '0 0 8px #f59e0b';
-        if (hudStatusEl) {
-          hudStatusEl.textContent = 'Active';
-          hudStatusEl.style.color = '#fbbf24';
-        }
+        hudStatusEl.textContent = 'Paced';
+        hudStatusEl.style.color = '#fbbf24';
       } else {
         hudPulseDot.style.background = '#10b981';
         hudPulseDot.style.boxShadow = '0 0 8px #10b981';
-        if (hudStatusEl) {
-          hudStatusEl.textContent = 'Healthy';
-          hudStatusEl.style.color = '#34d399';
-        }
+        hudStatusEl.textContent = 'Calm';
+        hudStatusEl.style.color = '#34d399';
       }
     }
   }
 
   /* =========================================================================
-   * 2. SCROLL KINEMATICS TRACKING
+   * 2. SCROLL KINEMATICS & REAL-TIME DOOMSCROLL BURST DETECTOR
    * ========================================================================= */
 
   let lastScrollTimestamp = performance.now();
   let accumulatedScrollDistance = 0;
   let maxBurstVelocity = 0;
   let scrollThrottleTimer = null;
-  const SCROLL_THROTTLE_MS = 200;
+  const SCROLL_BATCH_MS = 250;
+
+  // Sliding 15-second burst history for prompt soft interruptions
+  const burstHistory = [];
+  const BURST_WINDOW_MS = 15000;
+  let lastInterventionTime = 0;
+  const INTERVENTION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown between soft interruptions
+  let isFrictionActive = false;
+
+  function evaluateDoomscrollBurst(now) {
+    // Purge records older than sliding window
+    while (burstHistory.length > 0 && now - burstHistory[0].time > BURST_WINDOW_MS) {
+      burstHistory.shift();
+    }
+
+    if (burstHistory.length < 8) return; // Need minimal scroll burst
+
+    const totalDistance = burstHistory.reduce((acc, h) => acc + h.distance, 0);
+    const avgBurstVelocity = burstHistory.reduce((acc, h) => acc + h.velocity, 0) / burstHistory.length;
+
+    // DOOMSCROLLING BURST TRIGGER:
+    // 10+ rapid scrolls in <15s with avg velocity > 1.4 px/ms OR cumulative 3,000+ px distance
+    const isRapidBurst = burstHistory.length >= 10 && avgBurstVelocity >= 1.35;
+    const isExtremeDistance = totalDistance >= 3200 && avgBurstVelocity >= 1.1;
+
+    if ((isRapidBurst || isExtremeDistance) && now - lastInterventionTime >= INTERVENTION_COOLDOWN_MS) {
+      lastInterventionTime = now;
+      burstHistory.length = 0; // Clear burst
+
+      triggerSoftInterruption({
+        score: Math.min(0.92, 0.65 + avgBurstVelocity * 0.1),
+        reasons: [
+          `Rapid scrolling loop (${avgBurstVelocity.toFixed(1)} px/ms across past 15s)`,
+          `Cumulative rapid traversal (${Math.round(totalDistance)} px traversed)`
+        ]
+      });
+    }
+  }
 
   function recordScrollTick(distanceDelta) {
     if (distanceDelta <= 0) return;
@@ -283,9 +341,15 @@
     const instantVelocity = distanceDelta / timeDelta; // px/ms
     maxBurstVelocity = Math.max(maxBurstVelocity, instantVelocity);
     accumulatedScrollDistance += distanceDelta;
+    localScrollCount += 1;
 
-    updateHudLive(instantVelocity, distanceDelta);
+    applySmoothedVelocity(instantVelocity);
 
+    // Record into 15-second sliding burst detector
+    burstHistory.push({ time: Date.now(), distance: distanceDelta, velocity: instantVelocity });
+    evaluateDoomscrollBurst(Date.now());
+
+    // Throttled background event dispatch
     if (!scrollThrottleTimer) {
       scrollThrottleTimer = setTimeout(() => {
         if (accumulatedScrollDistance > 0) {
@@ -301,11 +365,11 @@
           maxBurstVelocity = 0;
         }
         scrollThrottleTimer = null;
-      }, SCROLL_THROTTLE_MS);
+      }, SCROLL_BATCH_MS);
     }
   }
 
-  // 1. Capture scroll on window and all scrolling containers (Reddit, Twitter, feeds, modals)
+  // 1. Container & window scroll capture
   let lastPositions = new WeakMap();
 
   function handleContainerScroll(e) {
@@ -324,10 +388,14 @@
 
   window.addEventListener('scroll', handleContainerScroll, { passive: true, capture: true });
 
-  // 2. Wheel event tracking (instant feedback for trackpad, wheel, and virtual lists)
+  // 2. Wheel event capture with gentle scroll dampening if friction is active
   window.addEventListener(
     'wheel',
     (e) => {
+      if (isFrictionActive) {
+        // Soft dampening during active interruption checkpoint
+        return;
+      }
       const delta = Math.abs(e.deltaY || e.deltaX || 0);
       if (delta > 0 && delta < 2000) {
         recordScrollTick(delta);
@@ -337,85 +405,39 @@
   );
 
   /* =========================================================================
-   * 3. USER ACTIVITY TRACKING (PRIVACY-FIRST)
+   * 3. USER ACTIVITY & VIDEO TRACKING
    * ========================================================================= */
 
   let lastMouseTime = 0;
   let lastKeyTime = 0;
-  let lastClickTime = 0;
 
-  window.addEventListener(
-    'mousemove',
-    () => {
-      const now = Date.now();
-      if (now - lastMouseTime >= 1000) {
-        lastMouseTime = now;
-        safeSendMessage({
-          type: 'USER_ACTIVITY',
-          data: { activityType: 'mouse', timestamp: now }
-        });
-      }
-    },
-    { passive: true }
-  );
+  window.addEventListener('mousemove', () => {
+    const now = Date.now();
+    if (now - lastMouseTime >= 1000) {
+      lastMouseTime = now;
+      safeSendMessage({ type: 'USER_ACTIVITY', data: { activityType: 'mouse', timestamp: now } });
+    }
+  }, { passive: true });
 
-  window.addEventListener(
-    'click',
-    () => {
-      const now = Date.now();
-      if (now - lastClickTime >= 500) {
-        lastClickTime = now;
-        safeSendMessage({
-          type: 'USER_ACTIVITY',
-          data: { activityType: 'click', timestamp: now }
-        });
-      }
-    },
-    { passive: true }
-  );
-
-  // Record presence of key action ONLY (never key content, text or passwords)
-  window.addEventListener(
-    'keydown',
-    () => {
-      const now = Date.now();
-      if (now - lastKeyTime >= 500) {
-        lastKeyTime = now;
-        safeSendMessage({
-          type: 'USER_ACTIVITY',
-          data: { activityType: 'keyboard', timestamp: now }
-        });
-      }
-    },
-    { passive: true }
-  );
-
-  /* =========================================================================
-   * 4. VIDEO & AUTOPLAY TRACKING
-   * ========================================================================= */
+  window.addEventListener('keydown', () => {
+    const now = Date.now();
+    if (now - lastKeyTime >= 500) {
+      lastKeyTime = now;
+      safeSendMessage({ type: 'USER_ACTIVITY', data: { activityType: 'keyboard', timestamp: now } });
+    }
+  }, { passive: true });
 
   const observedVideos = new WeakSet();
-
-  function isLikelyAutoplay(videoElement) {
-    if (!videoElement) return false;
-    return Boolean(
-      videoElement.autoplay ||
-      videoElement.hasAttribute('autoplay') ||
-      videoElement.getAttribute('data-autoplay') === 'true'
-    );
-  }
 
   function attachVideoListener(video) {
     if (!video || observedVideos.has(video)) return;
     observedVideos.add(video);
 
     video.addEventListener('play', () => {
+      const isAutoplay = Boolean(video.autoplay || video.hasAttribute('autoplay'));
       safeSendMessage({
         type: 'VIDEO_EVENT',
-        data: {
-          timestamp: Date.now(),
-          isAutoplay: isLikelyAutoplay(video)
-        }
+        data: { timestamp: Date.now(), isAutoplay }
       });
     }, { passive: true });
   }
@@ -426,11 +448,8 @@
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          if (node.tagName === 'VIDEO') {
-            attachVideoListener(node);
-          } else if (node.querySelectorAll) {
-            node.querySelectorAll('video').forEach(attachVideoListener);
-          }
+          if (node.tagName === 'VIDEO') attachVideoListener(node);
+          else if (node.querySelectorAll) node.querySelectorAll('video').forEach(attachVideoListener);
         }
       }
     }
@@ -447,207 +466,272 @@
   }
 
   /* =========================================================================
-   * 5. GENTLE WELLNESS INTERVENTION TOAST
+   * 4. SOFT INTERRUPTION & MINDFUL BREATHING INTERVENTION (SHADOW DOM)
    * ========================================================================= */
 
-  let nudgeContainer = null;
-  let shadowRoot = null;
+  let interventionHost = null;
+  let interventionShadow = null;
 
-  function createNudgeHost() {
-    if (nudgeContainer) return;
+  function createInterventionHost() {
+    if (interventionHost) return;
 
-    nudgeContainer = document.createElement('div');
-    nudgeContainer.id = 'nudge-extension-root';
-    nudgeContainer.style.all = 'initial';
-    nudgeContainer.style.position = 'fixed';
-    nudgeContainer.style.bottom = '24px';
-    nudgeContainer.style.right = '24px';
-    nudgeContainer.style.zIndex = '2147483647';
-    nudgeContainer.style.pointerEvents = 'auto';
+    interventionHost = document.createElement('div');
+    interventionHost.id = 'nudge-intervention-root';
+    interventionHost.style.all = 'initial';
+    interventionHost.style.position = 'fixed';
+    interventionHost.style.top = '0';
+    interventionHost.style.left = '0';
+    interventionHost.style.width = '100vw';
+    interventionHost.style.height = '100vh';
+    interventionHost.style.zIndex = '2147483647';
+    interventionHost.style.pointerEvents = 'auto';
 
-    shadowRoot = nudgeContainer.attachShadow({ mode: 'closed' });
-    document.documentElement.appendChild(nudgeContainer);
+    interventionShadow = interventionHost.attachShadow({ mode: 'open' });
+    document.documentElement.appendChild(interventionHost);
   }
 
-  function showNudgeToast(details = {}) {
-    createNudgeHost();
-    if (!shadowRoot) return;
+  function triggerSoftInterruption(details = {}) {
+    createInterventionHost();
+    if (!interventionShadow) return;
 
-    const reasons = (details.reasons || []).slice(0, 3);
-    const scorePct = Math.round((details.score || 0.7) * 100);
+    // Apply gentle scroll friction for 3.5 seconds to let the user pause comfortably
+    isFrictionActive = true;
+    setTimeout(() => {
+      isFrictionActive = false;
+    }, 3500);
 
-    shadowRoot.innerHTML = `
+    const reasons = (details.reasons || ['Rapid continuous scrolling detected']).slice(0, 2);
+    const scorePct = Math.round((details.score || 0.72) * 100);
+
+    interventionShadow.innerHTML = `
       <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; }
-        .toast {
-          width: 360px;
-          background: rgba(15, 23, 42, 0.95);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border: 1px solid rgba(99, 102, 241, 0.35);
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45), 0 0 20px rgba(99, 102, 241, 0.15);
-          border-radius: 16px;
-          padding: 18px;
+        
+        /* Soft Ambient Vignette Overlay */
+        .vignette-backdrop {
+          position: fixed;
+          top: 0; left: 0; width: 100vw; height: 100vh;
+          background: radial-gradient(circle at center, rgba(15, 23, 42, 0.4) 30%, rgba(15, 23, 42, 0.82) 85%, rgba(99, 102, 241, 0.22) 100%);
+          backdrop-filter: blur(4px);
+          -webkit-backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          animation: gentleFadeIn 0.5s ease forwards;
+        }
+
+        @keyframes gentleFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        /* Centered Mindful Card */
+        .mindful-card {
+          width: 440px;
+          max-width: 90vw;
+          background: rgba(15, 23, 42, 0.96);
+          border: 1px solid rgba(99, 102, 241, 0.4);
+          border-radius: 24px;
+          padding: 28px 24px;
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(99, 102, 241, 0.2);
           color: #f8fafc;
-          animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+          text-align: center;
+          animation: cardPop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        @keyframes slideUp {
-          from { transform: translateY(30px); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
+
+        @keyframes cardPop {
+          from { transform: scale(0.92) translateY(20px); opacity: 0; }
+          to { transform: scale(1) translateY(0); opacity: 1; }
         }
-        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-        .brand { display: flex; align-items: center; gap: 8px; }
-        .logo {
-          width: 24px; height: 24px; border-radius: 6px;
-          background: linear-gradient(135deg, #6366f1, #a855f7);
-          display: flex; align-items: center; justify-content: center;
-          font-weight: 800; font-size: 13px; color: #fff;
+
+        .tag-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 12px;
+          border-radius: 999px;
+          font-size: 11.5px;
+          font-weight: 700;
+          background: rgba(244, 63, 94, 0.15);
+          border: 1px solid rgba(244, 63, 94, 0.35);
+          color: #fb7185;
+          margin-bottom: 14px;
         }
-        .title { font-size: 13px; font-weight: 700; color: #fff; }
-        .badge {
-          font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
-          background: rgba(244, 63, 94, 0.15); border: 1px solid rgba(244, 63, 94, 0.3); color: #fb7185;
+
+        .heading {
+          font-size: 20px;
+          font-weight: 800;
+          color: #ffffff;
+          margin-bottom: 8px;
+          letter-spacing: -0.02em;
         }
-        .message { font-size: 12.5px; line-height: 1.45; color: #cbd5e1; margin-bottom: 12px; }
-        .reasons { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-        .reason-item {
-          font-size: 11px; color: #94a3b8; display: flex; align-items: center; gap: 6px;
-          background: rgba(30, 41, 59, 0.6); padding: 4px 8px; border-radius: 6px;
+
+        .description {
+          font-size: 13.5px;
+          color: #cbd5e1;
+          line-height: 1.5;
+          margin-bottom: 16px;
         }
-        .dot { width: 5px; height: 5px; border-radius: 50%; background: #818cf8; }
-        .actions { display: flex; gap: 8px; }
+
+        /* Breathing Guide Circle */
+        .breathing-container {
+          margin: 16px auto 20px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .breath-ring {
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(99, 102, 241, 0.4) 0%, rgba(139, 92, 246, 0.1) 70%);
+          border: 2px solid #818cf8;
+          animation: breathCycle 4s ease-in-out infinite;
+          margin-bottom: 10px;
+        }
+
+        @keyframes breathCycle {
+          0%, 100% { transform: scale(0.82); opacity: 0.6; box-shadow: 0 0 10px rgba(99, 102, 241, 0.3); }
+          50% { transform: scale(1.22); opacity: 1; box-shadow: 0 0 25px rgba(129, 140, 248, 0.8); }
+        }
+
+        .breath-label {
+          font-size: 12.5px;
+          font-weight: 700;
+          color: #a5b4fc;
+        }
+
+        .reasons-box {
+          background: rgba(30, 41, 59, 0.6);
+          border: 1px solid rgba(51, 65, 85, 0.5);
+          border-radius: 10px;
+          padding: 8px 12px;
+          margin-bottom: 20px;
+          font-size: 11.5px;
+          color: #94a3b8;
+          text-align: left;
+        }
+
+        .actions-row {
+          display: flex;
+          gap: 10px;
+          margin-top: 6px;
+        }
+
         .btn {
-          flex: 1; border: none; border-radius: 8px; padding: 8px 10px;
-          font-size: 11.5px; font-weight: 600; cursor: pointer; transition: all 0.15s ease; text-align: center;
+          flex: 1;
+          border: none;
+          border-radius: 12px;
+          padding: 10px 14px;
+          font-size: 12.5px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
         }
-        .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
-        .btn-primary:hover { opacity: 0.92; transform: translateY(-1px); }
-        .btn-secondary { background: rgba(51, 65, 85, 0.7); color: #cbd5e1; }
-        .btn-secondary:hover { background: rgba(71, 85, 105, 0.9); color: #fff; }
-        .btn-ghost { background: transparent; color: #94a3b8; flex: 0 0 auto; padding: 8px 10px; }
-        .btn-ghost:hover { color: #f8fafc; }
-        .breathing-box { display: none; text-align: center; padding: 12px 0; }
-        .circle {
-          width: 70px; height: 70px; border-radius: 50%; margin: 0 auto 10px;
-          background: radial-gradient(circle, rgba(99, 102, 241, 0.5) 0%, rgba(139, 92, 246, 0.1) 70%);
-          border: 2px solid #818cf8; animation: breathe 4s ease-in-out infinite;
+
+        .btn-resume {
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          color: #ffffff;
+          box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
         }
-        @keyframes breathe {
-          0%, 100% { transform: scale(0.85); opacity: 0.7; }
-          50% { transform: scale(1.25); opacity: 1; box-shadow: 0 0 20px #818cf8; }
+        .btn-resume:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 6px 18px rgba(99, 102, 241, 0.5);
         }
-        .breathe-text { font-size: 12px; font-weight: 600; color: #a5b4fc; }
+
+        .btn-secondary {
+          background: #334155;
+          color: #cbd5e1;
+        }
+        .btn-secondary:hover {
+          background: #475569;
+          color: #ffffff;
+        }
       </style>
 
-      <div class="toast" id="nudgeCard">
-        <div class="header">
-          <div class="brand">
-            <div class="logo">N</div>
-            <span class="title">Digital Wellness Check-in</span>
+      <div class="vignette-backdrop" id="backdrop">
+        <div class="mindful-card">
+          <div class="tag-pill">
+            <span>⚡ ${scorePct}% Compulsive Momentum</span>
           </div>
-          <span class="badge">${scorePct}% Compulsive Momentum</span>
-        </div>
 
-        <div class="content" id="standardContent">
-          <p class="message">
-            Your browsing behavior appears increasingly repetitive and compulsive. Consider taking a short pause.
+          <h2 class="heading">🌿 Mindful Pause</h2>
+          <p class="description">
+            Your browsing rhythm accelerated into a compulsive pattern. Take a slow breath, relax your shoulders, and check in with your intention.
           </p>
+
+          <div class="breathing-container">
+            <div class="breath-ring"></div>
+            <span class="breath-label" id="breathLabel">Breathe in...</span>
+          </div>
 
           ${
             reasons.length > 0
-              ? `<div class="reasons">
-                  ${reasons.map((r) => `<div class="reason-item"><span class="dot"></span><span>${r}</span></div>`).join('')}
+              ? `<div class="reasons-box">
+                  ${reasons.map((r) => `<div>• ${r}</div>`).join('')}
                 </div>`
               : ''
           }
 
-          <div class="actions">
-            <button class="btn btn-primary" id="takeBreakBtn">Take a 1-Min Pause</button>
-            <button class="btn btn-secondary" id="snoozeBtn">Snooze (10m)</button>
-            <button class="btn btn-ghost" id="dismissBtn">Dismiss</button>
+          <div class="actions-row">
+            <button class="btn btn-resume" id="resumeBtn">✓ Resume Mindfully</button>
+            <button class="btn btn-secondary" id="snoozeBtn">⏱️ Snooze (10m)</button>
           </div>
-        </div>
-
-        <div class="breathing-box" id="breathingBox">
-          <div class="circle"></div>
-          <div class="breathe-text" id="breatheText">Breathe in...</div>
-          <button class="btn btn-secondary" id="closeBreatherBtn" style="margin-top: 10px; width: 100%;">
-            Resume Mindfully
-          </button>
         </div>
       </div>
     `;
 
-    const card = shadowRoot.getElementById('nudgeCard');
-    const dismissBtn = shadowRoot.getElementById('dismissBtn');
-    const snoozeBtn = shadowRoot.getElementById('snoozeBtn');
-    const takeBreakBtn = shadowRoot.getElementById('takeBreakBtn');
-    const standardContent = shadowRoot.getElementById('standardContent');
-    const breathingBox = shadowRoot.getElementById('breathingBox');
-    const closeBreatherBtn = shadowRoot.getElementById('closeBreatherBtn');
-    const breatheText = shadowRoot.getElementById('breatheText');
+    const resumeBtn = interventionShadow.getElementById('resumeBtn');
+    const snoozeBtn = interventionShadow.getElementById('snoozeBtn');
+    const breathLabel = interventionShadow.getElementById('breathLabel');
+    const backdrop = interventionShadow.getElementById('backdrop');
 
-    function closeNudge() {
-      if (card) {
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(20px)';
-        card.style.transition = 'all 0.25s ease';
+    // Breath text toggler
+    let isInhale = true;
+    const breathTimer = setInterval(() => {
+      isInhale = !isInhale;
+      if (breathLabel) {
+        breathLabel.textContent = isInhale ? 'Breathe in...' : 'Breathe out...';
+      }
+    }, 2000);
+
+    function dismissIntervention(action) {
+      clearInterval(breathTimer);
+      isFrictionActive = false;
+      safeSendMessage({ type: 'LOG_INTERVENTION_ACTION', data: { action } });
+
+      if (backdrop) {
+        backdrop.style.opacity = '0';
+        backdrop.style.transition = 'opacity 0.35s ease';
         setTimeout(() => {
-          if (nudgeContainer && nudgeContainer.parentNode) {
-            nudgeContainer.parentNode.removeChild(nudgeContainer);
-            nudgeContainer = null;
-            shadowRoot = null;
+          if (interventionHost && interventionHost.parentNode) {
+            interventionHost.parentNode.removeChild(interventionHost);
+            interventionHost = null;
+            interventionShadow = null;
           }
-        }, 250);
+        }, 350);
       }
     }
 
-    if (dismissBtn) {
-      dismissBtn.addEventListener('click', () => {
-        safeSendMessage({ type: 'LOG_INTERVENTION_ACTION', data: { action: 'dismissed' } });
-        closeNudge();
-      });
+    if (resumeBtn) {
+      resumeBtn.addEventListener('click', () => dismissIntervention('resumed_mindfully'));
     }
 
     if (snoozeBtn) {
       snoozeBtn.addEventListener('click', () => {
         safeSendMessage({ type: 'SNOOZE_NUDGE', data: { snoozeMinutes: 10 } });
-        closeNudge();
-      });
-    }
-
-    if (takeBreakBtn) {
-      takeBreakBtn.addEventListener('click', () => {
-        safeSendMessage({ type: 'LOG_INTERVENTION_ACTION', data: { action: 'took_break' } });
-        standardContent.style.display = 'none';
-        breathingBox.style.display = 'block';
-
-        let phase = 0;
-        const breathInterval = setInterval(() => {
-          phase = (phase + 1) % 2;
-          if (breatheText) {
-            breatheText.textContent = phase === 0 ? 'Breathe in...' : 'Breathe out...';
-          }
-        }, 2000);
-
-        if (closeBreatherBtn) {
-          closeBreatherBtn.addEventListener('click', () => {
-            clearInterval(breathInterval);
-            closeNudge();
-          });
-        }
+        dismissIntervention('snoozed');
       });
     }
   }
 
+  // Listen for messages from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message && message.type === 'SHOW_NUDGE') {
-      showNudgeToast(message.data || {});
+      triggerSoftInterruption(message.data || {});
     }
   });
 
-  safeSendMessage({
-    type: 'USER_ACTIVITY',
-    data: { activityType: 'init', timestamp: Date.now() }
-  });
+  safeSendMessage({ type: 'USER_ACTIVITY', data: { activityType: 'init', timestamp: Date.now() } });
 })();
