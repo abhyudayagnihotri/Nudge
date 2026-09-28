@@ -495,6 +495,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+chrome.runtime.onInstalled.addListener(async () => {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+    for (const tab of tabs) {
+      if (tab.id && (!tab.url || (!tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')))) {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('[Nudge] Could not inject content scripts into existing tabs:', err);
+  }
+});
+
 async function init() {
   if (isInitialized) return;
   isInitialized = true;
@@ -503,3 +519,4 @@ async function init() {
 }
 
 init();
+

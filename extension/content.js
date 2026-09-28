@@ -1,16 +1,15 @@
 /**
- * Nudge Content Script - Privacy-First Behavioral Observer & Intervention UI
+ * Nudge Content Script - Privacy-First Behavioral Observer, Live HUD & Intervention UI
  *
- * Observes:
- * 1. Scrolling kinematics (distance, elapsed time, velocity) using document.scrollingElement.scrollTop
+ * 1. Scrolling kinematics (captures window, inner containers, and wheel events)
  * 2. High-level user activity (clicks, mouse movement, keyboard interaction without key values)
  * 3. Video playback and autoplay detection
- * 4. Renders isolated gentle wellness interventions (Phase 7) via Shadow DOM
+ * 4. Live Floating Wellness HUD (displays real-time scroll velocity and wellness status right on the webpage)
+ * 5. Isolated Gentle Wellness Interventions via Shadow DOM
  *
  * Guarantees:
  * - NO keystrokes, form inputs, passwords, or text recorded.
  * - NO page content, DOM tree dumps, or screenshots.
- * - Throttled dispatch to minimize background service worker overhead.
  */
 
 (function () {
@@ -22,15 +21,10 @@
   }
   window.__nudgeObserverInitialized = true;
 
-  /**
-   * Safe wrapper to send messages to background service worker.
-   */
   function safeSendMessage(message) {
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
-        return chrome.runtime.sendMessage(message).catch(() => {
-          // Context invalidated or SW warming up
-        });
+        return chrome.runtime.sendMessage(message).catch(() => {});
       }
     } catch {
       // Inaccessible runtime
@@ -39,84 +33,332 @@
   }
 
   /* =========================================================================
-   * 1. SCROLL TRACKING
+   * 1. LIVE FLOATING WELLNESS HUD (SHADOW DOM)
    * ========================================================================= */
 
-  let lastScrollTop = getScrollTop();
-  let lastScrollTimestamp = performance.now();
-  let accumulatedScrollDistance = 0;
-  let scrollThrottleTimer = null;
-  const SCROLL_THROTTLE_MS = 250;
+  let hudHost = null;
+  let hudShadow = null;
+  let hudVelocityEl = null;
+  let hudScrollsEl = null;
+  let hudStatusEl = null;
+  let hudPulseDot = null;
+  let hudPillEl = null;
+  let isHudMinimized = false;
 
-  function getScrollTop() {
-    return document.scrollingElement
-      ? document.scrollingElement.scrollTop
-      : (document.documentElement ? document.documentElement.scrollTop : 0);
+  let localScrollCount = 0;
+  let localTotalDistance = 0;
+  let localLastVelocity = 0;
+
+  function initHud() {
+    if (hudHost) return;
+
+    hudHost = document.createElement('div');
+    hudHost.id = 'nudge-hud-root';
+    hudHost.style.all = 'initial';
+    hudHost.style.position = 'fixed';
+    hudHost.style.bottom = '20px';
+    hudHost.style.right = '20px';
+    hudHost.style.zIndex = '2147483646';
+    hudHost.style.pointerEvents = 'auto';
+
+    hudShadow = hudHost.attachShadow({ mode: 'open' });
+
+    hudShadow.innerHTML = `
+      <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; }
+        .hud-pill {
+          background: rgba(15, 23, 42, 0.92);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          border: 1px solid rgba(99, 102, 241, 0.35);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35), 0 0 10px rgba(99, 102, 241, 0.15);
+          border-radius: 9999px;
+          padding: 6px 14px;
+          color: #f8fafc;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 11px;
+          user-select: none;
+          cursor: pointer;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .hud-pill:hover {
+          border-color: rgba(99, 102, 241, 0.6);
+          transform: translateY(-1px);
+        }
+        .brand-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #10b981;
+          box-shadow: 0 0 8px #10b981;
+          transition: background 0.3s ease;
+        }
+        .hud-title {
+          font-weight: 700;
+          color: #a5b4fc;
+        }
+        .metric-badge {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          background: rgba(30, 41, 59, 0.7);
+          padding: 2px 7px;
+          border-radius: 6px;
+          border: 1px solid rgba(51, 65, 85, 0.6);
+          color: #38bdf8;
+        }
+        .status-tag {
+          font-weight: 600;
+          color: #34d399;
+          font-size: 10px;
+        }
+        .toggle-btn {
+          background: transparent;
+          border: none;
+          color: #64748b;
+          font-size: 13px;
+          cursor: pointer;
+          padding: 0 2px;
+          line-height: 1;
+        }
+        .toggle-btn:hover {
+          color: #cbd5e1;
+        }
+        .minimized-pill {
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          justify-content: center;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          box-shadow: 0 2px 10px rgba(99, 102, 241, 0.5);
+          font-weight: 800;
+          font-size: 14px;
+          color: #fff;
+        }
+      </style>
+
+      <div class="hud-pill" id="hudPill" title="Nudge Live Telemetry (Click to toggle view)">
+        <span class="brand-dot" id="hudDot"></span>
+        <span class="hud-title">Nudge</span>
+        <div class="metric-badge">
+          <span>⚡</span>
+          <span id="hudVelocity">0.0</span>
+          <span style="font-size: 9px; color: #94a3b8;">px/ms</span>
+        </div>
+        <div class="metric-badge">
+          <span id="hudScrolls">0</span>
+          <span style="font-size: 9px; color: #94a3b8;">scrolls</span>
+        </div>
+        <span class="status-tag" id="hudStatus">Healthy</span>
+        <button class="toggle-btn" id="hudMinimizeBtn" title="Minimize">—</button>
+      </div>
+    `;
+
+    hudPillEl = hudShadow.getElementById('hudPill');
+    hudVelocityEl = hudShadow.getElementById('hudVelocity');
+    hudScrollsEl = hudShadow.getElementById('hudScrolls');
+    hudStatusEl = hudShadow.getElementById('hudStatus');
+    hudPulseDot = hudShadow.getElementById('hudDot');
+    const minimizeBtn = hudShadow.getElementById('hudMinimizeBtn');
+
+    if (minimizeBtn) {
+      minimizeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMinimize();
+      });
+    }
+
+    if (hudPillEl) {
+      hudPillEl.addEventListener('click', () => {
+        if (isHudMinimized) {
+          toggleMinimize();
+        }
+      });
+    }
+
+    if (document.body) {
+      document.body.appendChild(hudHost);
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        document.body.appendChild(hudHost);
+      });
+    }
   }
 
-  function handleScroll() {
-    const currentScrollTop = getScrollTop();
-    const now = performance.now();
-    const timeDelta = Math.max(1, now - lastScrollTimestamp);
-    const distanceDelta = Math.abs(currentScrollTop - lastScrollTop);
-
-    lastScrollTop = currentScrollTop;
-    lastScrollTimestamp = now;
-
-    if (distanceDelta > 0) {
-      accumulatedScrollDistance += distanceDelta;
-      const velocity = distanceDelta / timeDelta; // px/ms
-
-      if (!scrollThrottleTimer) {
-        scrollThrottleTimer = setTimeout(() => {
-          if (accumulatedScrollDistance > 0) {
-            safeSendMessage({
-              type: 'SCROLL_EVENT',
-              data: {
-                timestamp: Date.now(),
-                scrollDistance: Math.round(accumulatedScrollDistance),
-                velocity: Number(velocity.toFixed(3))
-              }
-            });
-            accumulatedScrollDistance = 0;
-          }
-          scrollThrottleTimer = null;
-        }, SCROLL_THROTTLE_MS);
+  function toggleMinimize() {
+    isHudMinimized = !isHudMinimized;
+    if (isHudMinimized) {
+      hudPillEl.className = 'hud-pill minimized-pill';
+      hudPillEl.innerHTML = 'N';
+    } else {
+      hudPillEl.className = 'hud-pill';
+      hudPillEl.innerHTML = `
+        <span class="brand-dot" id="hudDot"></span>
+        <span class="hud-title">Nudge</span>
+        <div class="metric-badge">
+          <span>⚡</span>
+          <span id="hudVelocity">${localLastVelocity.toFixed(1)}</span>
+          <span style="font-size: 9px; color: #94a3b8;">px/ms</span>
+        </div>
+        <div class="metric-badge">
+          <span id="hudScrolls">${localScrollCount}</span>
+          <span style="font-size: 9px; color: #94a3b8;">scrolls</span>
+        </div>
+        <span class="status-tag" id="hudStatus">Healthy</span>
+        <button class="toggle-btn" id="hudMinimizeBtn" title="Minimize">—</button>
+      `;
+      hudVelocityEl = hudShadow.getElementById('hudVelocity');
+      hudScrollsEl = hudShadow.getElementById('hudScrolls');
+      hudStatusEl = hudShadow.getElementById('hudStatus');
+      hudPulseDot = hudShadow.getElementById('hudDot');
+      const minBtn = hudShadow.getElementById('hudMinimizeBtn');
+      if (minBtn) {
+        minBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleMinimize();
+        });
       }
     }
   }
 
-  window.addEventListener('scroll', handleScroll, { passive: true });
+  function updateHudLive(velocity, distanceDelta) {
+    if (!hudHost) initHud();
+    if (isHudMinimized) return;
+
+    localScrollCount += 1;
+    localTotalDistance += distanceDelta;
+    localLastVelocity = velocity;
+
+    if (hudVelocityEl) hudVelocityEl.textContent = velocity.toFixed(1);
+    if (hudScrollsEl) hudScrollsEl.textContent = localScrollCount;
+
+    // Visual feedback
+    if (hudPulseDot) {
+      if (velocity > 2.5) {
+        hudPulseDot.style.background = '#f43f5e';
+        hudPulseDot.style.boxShadow = '0 0 10px #f43f5e';
+        if (hudStatusEl) {
+          hudStatusEl.textContent = 'Rapid';
+          hudStatusEl.style.color = '#fb7185';
+        }
+      } else if (velocity > 1.4) {
+        hudPulseDot.style.background = '#f59e0b';
+        hudPulseDot.style.boxShadow = '0 0 8px #f59e0b';
+        if (hudStatusEl) {
+          hudStatusEl.textContent = 'Active';
+          hudStatusEl.style.color = '#fbbf24';
+        }
+      } else {
+        hudPulseDot.style.background = '#10b981';
+        hudPulseDot.style.boxShadow = '0 0 8px #10b981';
+        if (hudStatusEl) {
+          hudStatusEl.textContent = 'Healthy';
+          hudStatusEl.style.color = '#34d399';
+        }
+      }
+    }
+  }
 
   /* =========================================================================
-   * 2. USER ACTIVITY TRACKING (PRIVACY-FIRST)
+   * 2. SCROLL KINEMATICS TRACKING
+   * ========================================================================= */
+
+  let lastScrollTimestamp = performance.now();
+  let accumulatedScrollDistance = 0;
+  let maxBurstVelocity = 0;
+  let scrollThrottleTimer = null;
+  const SCROLL_THROTTLE_MS = 200;
+
+  function recordScrollTick(distanceDelta) {
+    if (distanceDelta <= 0) return;
+
+    const now = performance.now();
+    const timeDelta = Math.max(1, now - lastScrollTimestamp);
+    lastScrollTimestamp = now;
+
+    const instantVelocity = distanceDelta / timeDelta; // px/ms
+    maxBurstVelocity = Math.max(maxBurstVelocity, instantVelocity);
+    accumulatedScrollDistance += distanceDelta;
+
+    updateHudLive(instantVelocity, distanceDelta);
+
+    if (!scrollThrottleTimer) {
+      scrollThrottleTimer = setTimeout(() => {
+        if (accumulatedScrollDistance > 0) {
+          safeSendMessage({
+            type: 'SCROLL_EVENT',
+            data: {
+              timestamp: Date.now(),
+              scrollDistance: Math.round(accumulatedScrollDistance),
+              velocity: Number(maxBurstVelocity.toFixed(3))
+            }
+          });
+          accumulatedScrollDistance = 0;
+          maxBurstVelocity = 0;
+        }
+        scrollThrottleTimer = null;
+      }, SCROLL_THROTTLE_MS);
+    }
+  }
+
+  // 1. Capture scroll on window and all scrolling containers (Reddit, Twitter, feeds, modals)
+  let lastPositions = new WeakMap();
+
+  function handleContainerScroll(e) {
+    const target = e.target === document ? document.scrollingElement || document.documentElement : e.target;
+    if (!target) return;
+
+    const currentTop = target.scrollTop || 0;
+    const prevTop = lastPositions.get(target) || 0;
+    const delta = Math.abs(currentTop - prevTop);
+    lastPositions.set(target, currentTop);
+
+    if (delta > 0 && delta < 5000) {
+      recordScrollTick(delta);
+    }
+  }
+
+  window.addEventListener('scroll', handleContainerScroll, { passive: true, capture: true });
+
+  // 2. Wheel event tracking (instant feedback for trackpad, wheel, and virtual lists)
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      const delta = Math.abs(e.deltaY || e.deltaX || 0);
+      if (delta > 0 && delta < 2000) {
+        recordScrollTick(delta);
+      }
+    },
+    { passive: true, capture: true }
+  );
+
+  /* =========================================================================
+   * 3. USER ACTIVITY TRACKING (PRIVACY-FIRST)
    * ========================================================================= */
 
   let lastMouseTime = 0;
   let lastKeyTime = 0;
   let lastClickTime = 0;
-  const ACTIVITY_THROTTLE_MS = 1000;
 
-  // Track mouse movement (throttled)
   window.addEventListener(
     'mousemove',
     () => {
       const now = Date.now();
-      if (now - lastMouseTime >= ACTIVITY_THROTTLE_MS) {
+      if (now - lastMouseTime >= 1000) {
         lastMouseTime = now;
         safeSendMessage({
           type: 'USER_ACTIVITY',
-          data: {
-            activityType: 'mouse',
-            timestamp: now
-          }
+          data: { activityType: 'mouse', timestamp: now }
         });
       }
     },
     { passive: true }
   );
 
-  // Track click interaction (throttled)
   window.addEventListener(
     'click',
     () => {
@@ -125,17 +367,14 @@
         lastClickTime = now;
         safeSendMessage({
           type: 'USER_ACTIVITY',
-          data: {
-            activityType: 'click',
-            timestamp: now
-          }
+          data: { activityType: 'click', timestamp: now }
         });
       }
     },
     { passive: true }
   );
 
-  // Track keyboard interaction (ONLY that a key event occurred - NEVER WHICH KEY)
+  // Record presence of key action ONLY (never key content, text or passwords)
   window.addEventListener(
     'keydown',
     () => {
@@ -144,10 +383,7 @@
         lastKeyTime = now;
         safeSendMessage({
           type: 'USER_ACTIVITY',
-          data: {
-            activityType: 'keyboard',
-            timestamp: now
-          }
+          data: { activityType: 'keyboard', timestamp: now }
         });
       }
     },
@@ -155,7 +391,7 @@
   );
 
   /* =========================================================================
-   * 3. VIDEO & AUTOPLAY TRACKING
+   * 4. VIDEO & AUTOPLAY TRACKING
    * ========================================================================= */
 
   const observedVideos = new WeakSet();
@@ -174,21 +410,18 @@
     observedVideos.add(video);
 
     video.addEventListener('play', () => {
-      const isAutoplay = isLikelyAutoplay(video);
       safeSendMessage({
         type: 'VIDEO_EVENT',
         data: {
           timestamp: Date.now(),
-          isAutoplay: isAutoplay
+          isAutoplay: isLikelyAutoplay(video)
         }
       });
     }, { passive: true });
   }
 
-  // Scan existing video elements
   document.querySelectorAll('video').forEach(attachVideoListener);
 
-  // Observe dynamically added video elements
   const videoObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
@@ -205,14 +438,16 @@
 
   if (document.body) {
     videoObserver.observe(document.body, { childList: true, subtree: true });
+    initHud();
   } else {
     document.addEventListener('DOMContentLoaded', () => {
       videoObserver.observe(document.body, { childList: true, subtree: true });
+      initHud();
     });
   }
 
   /* =========================================================================
-   * 4. PHASE 7: GENTLE IN-BROWSER INTERVENTION (SHADOW DOM TOAST)
+   * 5. GENTLE WELLNESS INTERVENTION TOAST
    * ========================================================================= */
 
   let nudgeContainer = null;
@@ -246,7 +481,7 @@
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; }
         .toast {
           width: 360px;
-          background: rgba(15, 23, 42, 0.94);
+          background: rgba(15, 23, 42, 0.95);
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
           border: 1px solid rgba(99, 102, 241, 0.35);
@@ -343,7 +578,6 @@
       </div>
     `;
 
-    // Event Handlers
     const card = shadowRoot.getElementById('nudgeCard');
     const dismissBtn = shadowRoot.getElementById('dismissBtn');
     const snoozeBtn = shadowRoot.getElementById('snoozeBtn');
@@ -406,19 +640,14 @@
     }
   }
 
-  // Listen for messages from background service worker
   chrome.runtime.onMessage.addListener((message) => {
     if (message && message.type === 'SHOW_NUDGE') {
       showNudgeToast(message.data || {});
     }
   });
 
-  // Initial ping to notify active presence
   safeSendMessage({
     type: 'USER_ACTIVITY',
-    data: {
-      activityType: 'init',
-      timestamp: Date.now()
-    }
+    data: { activityType: 'init', timestamp: Date.now() }
   });
 })();
